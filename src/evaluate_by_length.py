@@ -7,6 +7,7 @@ breaking down accuracy and loss by sentence length buckets.
 
 import os
 import sys
+import time
 import torch
 import torch.nn as nn
 import argparse
@@ -42,15 +43,18 @@ def evaluate_by_length(model, val_loader, device, length_buckets=[(1,5), (6,10),
         'total_loss': 0.0,
         'correct_tokens': 0,
         'total_tokens': 0,
-        'num_sentences': 0
+        'num_sentences': 0,
+        'total_inference_time': 0.0
     })
     
     with torch.no_grad():
         for src, trg in val_loader:
             src, trg = src.to(device), trg.to(device)
             
-            # Forward pass
+            # Forward pass with timing
+            start_time = time.time()
             output = model(src, trg, teacher_forcing_ratio=0)
+            inference_time = time.time() - start_time
             output_dim = output.shape[-1]
             
             # Get predictions and targets
@@ -71,6 +75,9 @@ def evaluate_by_length(model, val_loader, device, length_buckets=[(1,5), (6,10),
             loss_per_token = loss_per_token.view(batch_size, seq_len)
             correct = correct.view(batch_size, seq_len)
             trg_tokens = trg[:, 1:]
+            
+            # Distribute inference time across sentences in batch
+            time_per_sentence = inference_time / batch_size
             
             for i in range(batch_size):
                 # Count non-padding tokens (actual sentence length)
@@ -93,6 +100,7 @@ def evaluate_by_length(model, val_loader, device, length_buckets=[(1,5), (6,10),
                         bucket_metrics[bucket_key]['correct_tokens'] += sent_correct
                         bucket_metrics[bucket_key]['total_tokens'] += sent_length
                         bucket_metrics[bucket_key]['num_sentences'] += 1
+                        bucket_metrics[bucket_key]['total_inference_time'] += time_per_sentence
                         break
     
     # Calculate averages per bucket
@@ -103,7 +111,9 @@ def evaluate_by_length(model, val_loader, device, length_buckets=[(1,5), (6,10),
                 'avg_loss': metrics['total_loss'] / metrics['total_tokens'],
                 'accuracy': metrics['correct_tokens'] / metrics['total_tokens'],
                 'num_sentences': metrics['num_sentences'],
-                'total_tokens': metrics['total_tokens']
+                'total_tokens': metrics['total_tokens'],
+                'avg_inference_time': metrics['total_inference_time'] / metrics['num_sentences'],
+                'inference_time_per_token': metrics['total_inference_time'] / metrics['total_tokens']
             }
     
     return results
@@ -120,7 +130,8 @@ def plot_results(results_dict, save_path='results/performance_by_length.png', mi
     """
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    ax1, ax2, ax3, ax4 = axes.flatten()
     
     for model_name, results in results_dict.items():
         # Sort buckets by first number
@@ -130,6 +141,7 @@ def plot_results(results_dict, save_path='results/performance_by_length.png', mi
         accuracies = [b[1]['accuracy'] * 100 for b in sorted_buckets]
         losses = [b[1]['avg_loss'] for b in sorted_buckets]
         num_sentences = [b[1]['num_sentences'] for b in sorted_buckets]
+        inference_times = [b[1]['avg_inference_time'] * 1000 for b in sorted_buckets]  # Convert to ms
         
         # Plot accuracy
         ax1.plot(buckets, accuracies, marker='o', label=model_name.upper(), linewidth=2)
@@ -137,9 +149,12 @@ def plot_results(results_dict, save_path='results/performance_by_length.png', mi
         # Plot loss
         ax2.plot(buckets, losses, marker='o', label=model_name.upper(), linewidth=2)
         
+        # Plot inference time
+        ax3.plot(buckets, inference_times, marker='o', label=model_name.upper(), linewidth=2)
+        
         # Plot sample counts (just once)
         if model_name == list(results_dict.keys())[0]:
-            ax3.bar(buckets, num_sentences, alpha=0.6)
+            ax4.bar(buckets, num_sentences, alpha=0.6)
     
     # Accuracy plot
     ax1.set_title('Accuracy by Sentence Length', fontsize=12, fontweight='bold')
@@ -156,23 +171,31 @@ def plot_results(results_dict, save_path='results/performance_by_length.png', mi
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
-    # Sample count plot
-    ax3.set_title('Number of Samples per Length', fontsize=12, fontweight='bold')
+    # Inference time plot
+    ax3.set_title('Inference Time by Sentence Length', fontsize=12, fontweight='bold')
     ax3.set_xlabel('Sentence Length (tokens)')
-    ax3.set_ylabel('Count')
+    ax3.set_ylabel('Avg Inference Time (ms)')
+    ax3.legend()
     ax3.grid(True, alpha=0.3)
+    ax3.set_ylim(bottom=0)
+    
+    # Sample count plot
+    ax4.set_title('Number of Samples per Length', fontsize=12, fontweight='bold')
+    ax4.set_xlabel('Sentence Length (tokens)')
+    ax4.set_ylabel('Count')
+    ax4.grid(True, alpha=0.3)
     
     # Add horizontal line for minimum sample threshold
-    ax3.axhline(y=min_samples, color='red', linestyle='--', linewidth=1, 
+    ax4.axhline(y=min_samples, color='red', linestyle='--', linewidth=1, 
                 label=f'Min samples threshold ({min_samples})', alpha=0.7)
-    ax3.legend()
+    ax4.legend()
     
     # Annotate counts on bars
     first_model_results = list(results_dict.values())[0]
     sorted_buckets = sorted(first_model_results.items(), key=lambda x: int(x[0].split('-')[0]))
     for i, (bucket, metrics) in enumerate(sorted_buckets):
         count = metrics['num_sentences']
-        ax3.text(i, count, str(count), ha='center', va='bottom', fontweight='bold')
+        ax4.text(i, count, str(count), ha='center', va='bottom', fontweight='bold')
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -239,8 +262,8 @@ def main():
         
         # Print results
         print(f"\nResults for {model_type.upper()}:")
-        print(f"{'Length Range':<15} {'Accuracy':<12} {'Avg Loss':<12} {'# Sentences':<12} {'# Tokens':<12}")
-        print('-' * 63)
+        print(f"{'Length Range':<15} {'Accuracy':<12} {'Avg Loss':<12} {'Inf Time (ms)':<15} {'# Sentences':<12} {'# Tokens':<12}")
+        print('-' * 88)
         
         total_sentences = sum(m['num_sentences'] for m in results.values())
         
@@ -255,6 +278,7 @@ def main():
             print(f"{bucket:<15} "
                   f"{metrics['accuracy']*100:>10.2f}%  "
                   f"{metrics['avg_loss']:>10.4f}  "
+                  f"{metrics['avg_inference_time']*1000:>13.3f}  "
                   f"{num_sent:>10} ({pct_of_total:>5.1f}%)  "
                   f"{metrics['total_tokens']:>10}"
                   f"{warning}")

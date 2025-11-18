@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -17,10 +18,11 @@ def train_model(model, train_loader, val_loader, device, epochs=10, learning_rat
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     
-    history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
+    history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': [], 'epoch_time': []}
     
     # Main training loop
     for epoch in range(epochs):
+        epoch_start_time = time.time()
         model.train()
 
         # history
@@ -77,17 +79,22 @@ def train_model(model, train_loader, val_loader, device, epochs=10, learning_rat
                 # Update progress bar
                 val_pbar.set_postfix({'loss': loss.item()})
         
+        # Calculate epoch time
+        epoch_time = time.time() - epoch_start_time
+        
         # Record metrics
         history['train_loss'].append(train_loss / len(train_loader))
         history['val_loss'].append(val_loss / len(val_loader))
         history['train_acc'].append(train_acc / train_tokens if train_tokens > 0 else 0)
         history['val_acc'].append(val_acc / val_tokens if val_tokens > 0 else 0)
+        history['epoch_time'].append(epoch_time)
         
         print(f"Epoch {epoch+1}/{epochs} - "
               f"loss: {history['train_loss'][-1]:.4f} - "
               f"accuracy: {history['train_acc'][-1]:.4f} - "
               f"val_loss: {history['val_loss'][-1]:.4f} - "
-              f"val_accuracy: {history['val_acc'][-1]:.4f}")
+              f"val_accuracy: {history['val_acc'][-1]:.4f} - "
+              f"time: {epoch_time:.2f}s")
     
     return model, history
 
