@@ -62,8 +62,8 @@ Models are saved to `models/` with training history in JSON format. Training cur
 | Model | Parameters | Memory | Long Sequences |
 |-------|-----------|---------|----------------|
 | RNN | 2.17M | Single hidden state | Poor |
-| LSTM | 6.95M | Hidden + cell state | Good |
-| GRU | 5.24M | Hidden state + gates | Better |
+| LSTM | 7.69M | Hidden + cell state | Good |
+| GRU | 5.85M | Hidden state + gates | Better |
 
 **Performance by length analysis** available via `evaluate_by_length.py` - shows accuracy/loss breakdown for different sentence lengths (1-5, 6-10, 11-15, 16-20, 21+ tokens).
 
